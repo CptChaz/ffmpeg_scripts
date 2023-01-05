@@ -1,0 +1,28 @@
+#!/bin/bash
+#USE CASE FOR THIS SCRIPT:
+#Easily ran from single file directory of media (i.e. ~/media/tv/show_name/season_1/)
+#This script will check an input file to see if contains either an AC3 stream and/or a stereo stream.
+#If neither or both streams are missing from the source file, a new file will be output with all original streams and new streams.
+
+output_file="${1%.*}_converted.mkv"
+
+# Check if the input file has an AC3 stream
+ac3_stream=$(ffmpeg -i "$1" -c:a copy -f null /dev/null 2>&1 | grep "Audio: ac3")
+if [ -z "$ac3_stream" ]; then
+  # Input file does not have an AC3 stream, create one
+  ac3_option="-c:a ac3"
+else
+  ac3_option=""
+fi
+
+# Check if the input file has a stereo stream
+stereo_stream=$(ffmpeg -i "$1" -c:a copy -f null /dev/null 2>&1 | grep "Audio: pcm_s16le")
+if [ -z "$stereo_stream" ]; then
+  # Input file does not have a stereo stream, create one
+  stereo_option="-c:a pcm_s16le -ac 2"
+else
+  stereo_option=""
+fi
+
+# Output the missing streams to the output file
+ffmpeg -i "$1" $ac3_option $stereo_option -c:v copy -map 0 "$output_file"
