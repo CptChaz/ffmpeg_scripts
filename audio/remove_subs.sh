@@ -10,7 +10,7 @@
 # 
 # Tip: On linux systems, create an alias to make executing the script easier. For example:  
 #  -->  alias fix_subs='bash -c '\''/your/path/here/remove_subs.sh *.*'\'''
-# Then, once alias "fix_subs" is created, navigate to directory with file(s) that you wish to remove subs from, and simply type "fix_alias". Script will execute from there.
+# Then, once alias "fix_subs" is created, navigate to directory with file(s) that you wish to remove subs from, and simply type "fix_subs". Script will execute from there.
 # Status: Tested
 #
 # Credits:
