@@ -6,7 +6,7 @@
 # The script first checks to make sure ffmpeg is installed. Then it checks the working directory and asks the user which file to remove the subs from.
 # Once user selection is made, the script does the rest. The script will make a backup copy of the orginal file first. If ffmpeg fails, the backup is restored.
 # If successful, the new file is given the original filename and the input file is deleted. Works on mkv and mp4 containers. Currently the script removes the following streams:
-#    dvd_sub, srt, subrip, ass, bmp - these can be adjusted by modifying the section below "Iterate over the streams"
+#   webvtt, dvd_sub, hdmv_pgs_subtitle, ass, bmp - these can be adjusted by modifying the user config area.
 # 
 # Tip: On linux systems, create an alias to make executing the script easier. For example:  
 #  -->  alias fix_subs='bash -c '\''/your/path/here/remove_subs.sh *.*'\'''
@@ -20,128 +20,139 @@
 
 
 
-#!/bin/bash
+#!/usr/bin/env bash
+shopt -s nullglob
 
-# Function to list video files and ask for user input if multiple files are found
-choose_file() {
-  local files=(*.mp4 *.mkv)  # Modify this line if you need to add more video formats
-  local count=${#files[@]}
-  
-  if [ "$count" -eq 0 ]; then
-    echo "No video files found in the directory."
-    exit 1
-  elif [ "$count" -eq 1 ]; then
-    echo "One file found: ${files[0]}"
-    chosen_file="${files[0]}"
-  else
-    echo "Multiple video files found:"
-    for i in "${!files[@]}"; do
-      echo "$((i+1)): ${files[i]}"
-    done
-    
-    while true; do
-      read -p "Enter the number of the file you want to process: " file_num
-      
-      # Validate user input
-      if [[ $file_num =~ ^[0-9]+$ ]] && [ "$file_num" -ge 1 ] && [ "$file_num" -le "$count" ]; then
-        chosen_file="${files[$((file_num-1))]}"
+# -----------------------------
+# USER CONFIG - adjust video extensions and subtitle formats. (only .mkv and .mp4 have been tested)
+undesirable_subs=("webvtt" "dvd_sub" "hdmv_pgs_subtitle" "ass" "bmp")
+video_files=( *.mkv *.mp4 )
+# -----------------------------
+
+echo "Starting script..."
+
+# 1) SELECT FILE
+count=${#video_files[@]}
+if [[ $count -eq 0 ]]; then
+  echo "No video files found. Exiting."
+  exit 1
+elif [[ $count -eq 1 ]]; then
+  chosen_file="${video_files[0]}"
+  echo "Single file found: $chosen_file"
+else
+  echo "Multiple video files found:"
+  for i in "${!video_files[@]}"; do
+    echo "$((i+1))). ${video_files[i]}"
+  done
+  while true; do
+    read -p "Enter the number of the file you want to process: " file_num
+    if [[ $file_num =~ ^[0-9]+$ ]] && (( file_num >= 1 && file_num <= count )); then
+      chosen_file="${video_files[$((file_num-1))]}"
+      break
+    else
+      echo "Invalid selection. Please try again."
+    fi
+  done
+fi
+echo " "
+
+# 2) CHECK FOR FFMPEG
+echo "Checking if ffmpeg is installed..."
+if ! command -v ffmpeg &>/dev/null; then
+  echo "Error: ffmpeg is not installed."
+  exit 1
+fi
+echo "ffmpeg found."
+echo " "
+
+# 3) BACKUP & BASIC VARS
+extension="${chosen_file##*.}"
+backup_file="${chosen_file}.bak"
+
+echo "Creating backup of '${chosen_file}' as '${backup_file}'..."
+cp -f "$chosen_file" "$backup_file" || {
+  echo "Failed to create backup. Exiting."
+  exit 1
+}
+echo "Backup created."
+echo " "
+
+# 4) BUILD EXCLUSION LIST
+# We'll parse ffprobe line-by-line, collecting index/codec_name/codec_type,
+# then "commit" the last stream once we see a new index or reach EOF.
+
+echo "Detecting undesirable subtitles with ffprobe..."
+map_options=""
+current_index=""
+current_codec=""
+current_type=""
+
+commit_stream() {
+  # Called when we complete one stream block
+  # If it's a subtitle with an undesirable codec, we exclude it
+  echo "Committing stream: index=$current_index, codec=$current_codec, type=$current_type"
+  if [[ "$current_type" == "subtitle" && -n "$current_index" ]]; then
+    for bad in "${undesirable_subs[@]}"; do
+      if [[ "$current_codec" == "$bad" ]]; then
+        map_options+=" -map -0:${current_index}"
+        echo "-> Excluding subtitle stream #$current_index ($current_codec)"
         break
-      else
-        echo "Invalid selection. Please try again."
       fi
     done
   fi
+  current_index=""
+  current_codec=""
+  current_type=""
 }
 
-# Initial checks and setup
-echo "Starting the script..."
-choose_file
+# Parse ffprobe
+while IFS= read -r line; do
+  # e.g. "index=2", "codec_name=webvtt", "codec_type=subtitle"
+  if [[ "$line" =~ ^index=([0-9]+)$ ]]; then
+    # New stream => commit the previous one first
+    if [[ -n "$current_index" ]]; then
+      commit_stream
+    fi
+    current_index="${BASH_REMATCH[1]}"
 
-# Check if ffmpeg is installed
-echo "Checking to make sure ffmpeg is installed"
-if ! [ -x "$(command -v ffmpeg)" ]; then
-  echo 'Error: ffmpeg is not installed.' >&2
-  exit 1
-fi
-echo " "
+  elif [[ "$line" =~ ^codec_name=(.*)$ ]]; then
+    current_codec="${BASH_REMATCH[1]}"
 
-# Check if the chosen file exists
-echo "Checking if the chosen file exists..."
-if [ ! -f "$chosen_file" ]; then
-  echo "Error: the chosen file does not exist." >&2
-  exit 1
-fi
-echo " "
-
-# Create a backup of the chosen file
-echo "Creating a backup of the chosen file..."
-backup_file="$chosen_file.bak"
-cp "$chosen_file" "$backup_file"
-echo "Backup file created as $backup_file"
-echo " "
-
-# Copy the file name of the chosen file
-echo "Copying the chosen file name"
-file_name=$(basename "$chosen_file")
-echo " "
-
-# Set the output file name
-echo "Setting the output file name"
-if [[ $file_name == *.mkv ]]; then
-  output_file="output.mkv"
-else
-  output_file="output.mp4"
-fi
-echo " "
-
-# Use ffmpeg to list the streams in the chosen file
-echo "Using ffmpeg to list the streams in the chosen file"
-streams=$(ffmpeg -i "$file_name" 2>&1 | grep "Stream #")
-
-# Initialize an empty array to store the stream indices
-stream_indices=()
-
-# Iterate over the streams
-echo "Iterating over the streams"
-while read -r line; do
-  if [[ $line =~ "dvd_sub" || $line =~ "srt" || $line =~ "subrip" || $line =~ "ass" || $line =~ "bmp" ]]; then
-     stream_index=$(echo "$line" | grep -oP "(?<=\#)[^:]*")
-     stream_indices+=("$stream_index")
+  elif [[ "$line" == "codec_type=subtitle" ]]; then
+    current_type="subtitle"
   fi
-done <<< "$streams"
-
-# Initialize the map options string
-map_options=""
-echo " "
-
-# Iterate over the stream indices
-echo "Iterating over the stream indices"
-for stream_index in "${stream_indices[@]}"; do
-    map_options+="-map -$stream_index? "
-done
-echo "Adding the stream index to the map options string and excluding it from the output file"
-echo " "
-echo $map_options
-
-# Use ffmpeg to remove the unwanted subtitle streams from the chosen file and create a new output file
-echo "Finally time to remove the actual sub streams from the file itself"
-ffmpeg -hide_banner -loglevel info -i "$file_name" -strict -2 -max_muxing_queue_size 10240 $map_options -c copy "$output_file"
-
-echo " "
-echo "Incompatible subtitles removed. Output file saved as $output_file"
-echo " "
-
-# Check if the output file exists
-echo "Now time to make sure the output file exists, and delete the backup if so"
-echo " "
-if [ -e "$output_file" ]; then
-    rm *.bak
-    
-    # Rename $output_file with $file_name
-    mv "$output_file" "$file_name"
-else
-    echo "Looks like the ffmpeg command failed. Restoring backup file"
-    mv "$backup_file" "$output_file"
-    rm output.mkv
+done < <(
+  ffprobe -v error \
+          -show_entries stream=index,codec_type,codec_name \
+          -of default=noprint_wrappers=1 \
+          "$chosen_file"
+)
+# Commit the final stream block after the loop
+if [[ -n "$current_index" ]]; then
+  commit_stream
 fi
 
+echo "Final map_options: '$map_options'"
+echo " "
+
+# 5) RUN FFMPEG
+output_file="output.${extension}"
+echo "Running ffmpeg to remove undesired subtitles..."
+echo "ffmpeg -i \"$chosen_file\" -map 0 $map_options -c copy \"$output_file\""
+ffmpeg -i "$chosen_file" -map 0 $map_options -c copy "$output_file"
+
+echo " "
+
+# 6) CHECK SUCCESS / RENAME
+if [[ -f "$output_file" && -s "$output_file" ]]; then
+  echo "ffmpeg succeeded. Removing backup and renaming output..."
+  rm -f "$backup_file"
+  mv -f "$output_file" "$chosen_file"
+  echo "Subtitles removed successfully (if any matched)."
+else
+  echo "ffmpeg failed or output file is empty. Restoring backup..."
+  rm -f "$output_file"
+  mv -f "$backup_file" "$chosen_file"
+fi
+
+echo "Done."
