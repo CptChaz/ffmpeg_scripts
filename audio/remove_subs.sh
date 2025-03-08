@@ -1,7 +1,7 @@
 #
 # Author: [Cpt. Chaz]
 # Created: [05/13/24]
-# Updated: --
+# Updated: [03/08/25]
 # Description: This script is designed to remove incompatible subtitle streams using ffmpeg, particularly when re-muxing from .mkv to .mp4 file containers.
 # The script first checks to make sure ffmpeg is installed. Then it checks the working directory and asks the user which file to remove the subs from.
 # Once user selection is made, the script does the rest. The script will make a backup copy of the orginal file first. If ffmpeg fails, the backup is restored.
